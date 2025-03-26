@@ -7,14 +7,11 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
 
-    crane.url = "github:ipetkov/crane";
-
     flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
   outputs =
     inputs@{
-      crane,
       flake-parts,
       ...
     }:
@@ -34,27 +31,78 @@
         let
           rust-bin = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
-          craneLib = (crane.mkLib pkgs).overrideToolchain rust-bin;
-          src = craneLib.cleanCargoSource ./src-tauri;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rust-bin;
+            rustc = rust-bin;
+          };
 
-          commonArgs = {
-            inherit src;
-            strictDeps = true;
+          pnpmDeps = pkgs.pnpm.fetchDeps {
+            pname = "ltrait-ui-tauri-pnpmdeps";
+            version = "0.1.0";
+            src = ./.;
+            hash = "sha256-zbPyJhqvzXSoWbQ/QNFybNlypbFwBv4cCA3INAJu7Ow=";
+          };
+        in
+        {
 
-            preBuild = ''
-              export PERMISSION_FILES_PATH=$TMPDIR
-              echo $TMPDIR
-            '';
-
-            nativeBuildInputs = with pkgs; [
-              pkg-config
-
-              gobject-introspection
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = [
+              inputs.rust-overlay.overlays.default
             ];
+          };
+
+          packages = {
+            default = rustPlatform.buildRustPackage rec {
+              pname = "ltrait-ui-tauri";
+              version = "0.1.0";
+              src = ./.;
+
+              cargoLock.lockFile = ./src-tauri/Cargo.lock;
+
+              inherit pnpmDeps;
+
+              nativeBuildInputs = with pkgs; [
+                cargo-tauri.hook
+
+                nodejs
+                pnpm.configHook
+
+                pkg-config
+                wrapGAppsHook4
+              ];
+
+              buildInputs =
+                with pkgs;
+                [ openssl ]
+                ++ lib.optionals stdenv.hostPlatform.isLinux [
+                  glib-networking # Most Tauri apps need networking
+                  webkitgtk_4_1
+                ];
+
+              cargoRoot = "src-tauri";
+              buildAndTestSubdir = cargoRoot;
+            };
+          };
+
+          devShells.default = pkgs.mkShell {
+            inputsFrom = [
+              self'.packages.default
+            ];
+
+            name = "ltrait";
 
             buildInputs =
               with pkgs;
               [
+                pnpm
+
+                rust-bin
+
+                cargo-nextest
+                cargo-tauri
+              ]
+              ++ [
                 at-spi2-atk
                 atkmm
                 cairo
@@ -69,61 +117,6 @@
               ++ lib.optionals stdenv.hostPlatform.isLinux [
                 webkitgtk_4_1
               ];
-          };
-
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-          pnpmDeps = pkgs.pnpm.fetchDeps {
-            pname = "ltrait-ui-tauri-pnpmdeps";
-            version = "0.1.0";
-            src = ./.;
-            hash = "sha256-zbPyJhqvzXSoWbQ/QNFybNlypbFwBv4cCA3INAJu7Ow=";
-          };
-
-          ltrait-ui-tauri = craneLib.buildPackage (
-            commonArgs
-            // {
-              inherit cargoArtifacts pnpmDeps;
-
-              nativeBuildInputs = with pkgs; [
-                cargo-tauri.hook
-                pnpm.configHook
-                wrapGAppsHook4
-
-                nodejs
-              ];
-            }
-          );
-        in
-        {
-
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            overlays = [
-              inputs.rust-overlay.overlays.default
-            ];
-          };
-
-          packages = {
-            # TODO: nixでビルドできない
-            default = ltrait-ui-tauri;
-          };
-
-          devShells.default = pkgs.mkShell {
-            inputsFrom = [
-              self'.packages.default
-            ];
-
-            name = "ltrait";
-
-            buildInputs = with pkgs; [
-              pnpm
-
-              rust-bin
-
-              cargo-nextest
-              cargo-tauri
-            ];
           };
         };
     };
